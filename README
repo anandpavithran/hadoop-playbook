@@ -1,0 +1,36 @@
+STEPS
+#####
+1] Login as root user
+
+2] Install following packages
+  yum install libvirt qemu-kvm virt-manager virt-install libguestfs-tools-c -y
+
+3] Create /root/hadoop directory.
+
+4] Download the Centos7 qcow image from the following link to /root/hadoop directory.
+ https://cloud.centos.org/centos/7/images/CentOS-7-x86_64-GenericCloud.qcow2
+
+Change the version accordingly inside the playbook[if its is new].
+
+5] Download hadoop from following link
+ http://apache.cs.utah.edu/hadoop/common/current/hadoop-3.1.3.tar.gz
+Change the version accordingly inside the playbook[if its is new].
+
+6]Download the files from github
+https://github.com/anandpavithran/hadoop-playbook
+
+7]Execute following command
+ansible-playbook hadoop1.yml --ask-pass
+
+8] Once above one is completed execute the following
+ansible-playbook hadoop2.yml
+
+9] Login in to hadoop master as root execute following commands.
+   ssh root@master
+   su - hadoop
+   hdfs namenode -format
+   start-dfs.sh
+   hdfs dfsadmin -report
+   http://your_master_node_IP:9870
+
+

@@ -1,0 +1,62 @@
+---
+- name: Provision of Virtual machines for Hadoop setup
+  hosts: localhost
+  tasks:
+    - name: Generate key for nodes 
+      openssh_keypair:
+        path: "/root/.ssh/id_rsa"
+        type: rsa
+        size: 4096
+        state: present
+        force: no
+    #- name: create an SSH public and private Key
+    #  shell: ssh-keygen -b 2048 -t rsa -f /root/.ssh/id_rsa -q -N ""
+    #  args:
+    #    creates: /root/.ssh/id_rsa
+    - name: Customize virtual image
+      shell: virt-customize -a "/root/hadoop/CentOS-7-x86_64-GenericCloud.qcow2" --install wget --uninstall cloud-init --ssh-inject root:file:/root/.ssh/id_rsa.pub --selinux-relabel 
+    - name: Replicate disk image
+      copy :
+        src: "/root/hadoop/CentOS-7-x86_64-GenericCloud.qcow2"
+        dest: /root/hadoop/{{item}}.qcow2
+      loop:
+       - master
+       - node1
+       - node2  
+    - name: Create Virtual machines
+      shell: virt-install --import --name "{{item}}" --disk "/root/hadoop/{{item}}.qcow2" --memory  2048 --cpu host --vcpus 3 --os-type linux --os-variant rhel7-unknown --network  network=default,model=virtio --noreboot --noautoconsole
+      loop:
+        - master
+        - node1
+        - node2  
+    - name: starting {{item}}
+      virt:
+       name: "{{item}}"
+       state: running
+       uri: 'qemu:///system'
+      loop:
+        - master
+        - node1
+        - node2 
+    - name: Fetch the IPADDRESS 
+      shell: >
+          sleep 15;
+          virsh domifaddr {{item}} | 
+          grep ipv4 | 
+          head -n1 | 
+          awk '{print $4}' | 
+          cut -d'/' -f1
+      loop:
+        - master
+        - node1
+        - node2
+      register: apple
+
+    - name: Fetch the IP address and update inventory
+      lineinfile: line="[{{item.item}}]\n{{item.stdout}}" path=/root/hadoop/inventory/inventory2 create=yes state=present
+      loop: "{{apple.results}}"
+    - name: Grouping
+      lineinfile: line="[big:children]\nmaster\nnode1\nnode2" path=/root/hadoop/inventory/inventory2 create=yes state=present
+    - name: Update /etc/hosts file
+      lineinfile: line="{{item.stdout}} {{item.item}}" path=/etc/hosts create=yes state=present
+      loop: "{{apple.results}}"

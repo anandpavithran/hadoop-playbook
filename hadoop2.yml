@@ -1,0 +1,235 @@
+---
+- name: Create hadoop user in all nodes
+  hosts: big
+  tasks:
+    - name: Set entries in /etc/hosts file
+      copy: 
+       src: /etc/hosts
+       dest: /etc/hosts
+    - name: Reboot vms
+      reboot:
+       reboot_timeout: 60
+    - name: Add user
+      user:
+        name: hadoop
+        group: wheel
+        state: present
+        createhome: yes
+        home: /home/hadoop
+        password: "{{ 'redhat' | password_hash('sha512') }}"
+        generate_ssh_key: yes
+        ssh_key_type: rsa
+        ssh_key_bits: 4096
+        ssh_key_file: .ssh/id_rsa
+        force: no
+    - name: Fetch key from master
+      fetch:
+       src: /home/hadoop/.ssh/id_rsa.pub
+       dest: /tmp/prefix-{{item}}
+       flat: yes
+      delegate_to: "{{item}}"
+      loop:
+       - master
+       - node1
+       - node2
+    - name: Merge keys
+      shell: cat /tmp/prefix-{master,node1,node2} > /root/hadoop/mykey.pub
+      delegate_to: localhost
+    - name: Set authorized key taken from file
+      authorized_key:
+        user: hadoop
+        state: present
+        key: "{{ lookup('file', '/root/hadoop/mykey.pub') }}"
+    - name: INstall Java
+      yum:
+       name:
+       - java-11-openjdk 
+       - java-11-openjdk-devel 
+       state: present
+    - name: Setting Java Environment variable
+      shell: >
+       echo "JAVA_HOME=$(which java)" | 
+       sudo tee -a /etc/environment
+    - name: Reload Environment variable
+      shell: source /etc/environment
+    - name: Setting Hadoop path
+      lineinfile: 
+       line: "export HADOOP_HOME=/home/hadoop/hadoop\nexport PATH=${PATH}:${HADOOP_HOME}/bin:${HADOOP_HOME}/sbin" 
+       path: /home/hadoop/.bashrc
+       create: yes 
+       state: present
+    - name: Setting Hadoop path in .bash_profile
+      lineinfile: 
+       line: "PATH=/home/hadoop/hadoop/bin:/home/hadoop/hadoop/sbin:$PATH" 
+       path: /home/hadoop/.bash_profile
+       create: yes 
+       state: present
+- name: Configure hadoop user in Master
+  hosts: master
+  tasks:
+    - name: Download Hadoop package and extract
+      unarchive:
+       src: /root/hadoop/hadoop-3.1.3.tar.gz
+       dest: /home/hadoop/
+      # remote_src: yes
+    - name: Rename the directory
+      shell: mv /home/hadoop/hadoop-3.1.3 /home/hadoop/hadoop
+    - name: Finding Java PATH
+      command: "update-alternatives --display java"
+      register: jpath
+    - name: Template for processing
+      template:
+       src: second.j2
+       dest: /root/hadoop/jpath
+      delegate_to: localhost 
+    - name: String processing1
+      replace:
+       path: /root/hadoop/jpath
+       regexp:  "' link currently points to "
+       replace: "export JAVA_HOME="
+      delegate_to: localhost 
+    - name: String processing2
+      replace:
+       path: /root/hadoop/jpath
+       regexp:  "/bin/java'"
+       replace: ""
+      delegate_to: localhost 
+    - name: Setting JAVA_HOME In Hadoop
+      lineinfile: 
+       line: "{{ lookup('file', '/root/hadoop/jpath') }}" 
+       path: /home/hadoop/hadoop/etc/hadoop/hadoop-env.sh
+       create: yes 
+       state: present
+    - name: Setting core-site.xml
+      blockinfile:
+       path: /home/hadoop/hadoop/etc/hadoop/core-site.xml
+       marker: "<!-- {mark} ANSIBLE MANAGED BLOCK -->"
+       insertafter: "<configuration>"
+       content: |
+          <property>
+          <name>fs.default.name</name>
+          <value>hdfs://master:9000</value>
+          </property>
+    - name: Setting hdfs-site.xml
+      blockinfile:
+       path: /home/hadoop/hadoop/etc/hadoop/hdfs-site.xml
+       marker: "<!-- {mark} ANSIBLE MANAGED BLOCK -->"
+       insertafter: "<configuration>"
+       content: |
+          <property>
+            <name>dfs.namenode.name.dir</name>
+            <value>/home/hadoop/data/nameNode</value>
+          </property>
+          <property>
+            <name>dfs.datanode.data.dir</name>
+            <value>/home/hadoop/data/dataNode</value>
+          </property>
+          <property>
+            <name>dfs.replication</name>
+            <value>2</value>
+          </property>
+    - name: Setting mapred-site.xml
+      blockinfile:
+       path: /home/hadoop/hadoop/etc/hadoop/mapred-site.xml
+       marker: "<!-- {mark} ANSIBLE MANAGED BLOCK -->"
+       insertafter: "<configuration>"
+       content: |
+          <property>
+            <name>mapreduce.framework.name</name>
+            <value>yarn</value>
+          </property>
+          <property>
+            <name>yarn.app.mapreduce.am.env</name>
+            <value>HADOOP_MAPRED_HOME=$HADOOP_HOME</value>
+          </property>
+          <property>
+            <name>mapreduce.map.env</name>
+            <value>HADOOP_MAPRED_HOME=$HADOOP_HOME</value>
+          </property>
+          <property>
+            <name>mapreduce.reduce.env</name>
+            <value>HADOOP_MAPRED_HOME=$HADOOP_HOME</value>
+          </property>
+          <property>
+            <name>yarn.app.mapreduce.am.resource.mb</name>
+            <value>512</value>
+          </property>
+          <property>
+            <name>mapreduce.map.memory.mb</name>
+            <value>256</value>
+          </property>
+          <property>
+            <name>mapreduce.reduce.memory.mb</name>
+            <value>256</value>
+          </property>
+    - name: Setting yarn-site.xml
+      blockinfile:
+       path: /home/hadoop/hadoop/etc/hadoop/yarn-site.xml
+       marker: "<!-- {mark} ANSIBLE MANAGED BLOCK -->"
+       insertafter: "<configuration>"
+       content: |
+          <property>
+            <name>yarn.acl.enable</name>
+            <value>0</value>
+          </property>
+          <property>
+            <name>yarn.resourcemanager.hostname</name>
+            <value>{{ ansible_facts["eth0"]["ipv4"]["address"] }}</value>
+          </property>
+          <property>
+            <name>yarn.nodemanager.aux-services</name>
+            <value>mapreduce_shuffle</value>
+          </property>
+          <property>
+            <name>yarn.nodemanager.resource.memory-mb</name>
+            <value>2048</value>
+          </property>
+          <property>
+            <name>yarn.scheduler.maximum-allocation-mb</name>
+            <value>2048</value>
+          </property>
+          <property>
+            <name>yarn.scheduler.minimum-allocation-mb</name>
+            <value>1024</value>
+          </property>
+          <property>
+            <name>yarn.nodemanager.vmem-check-enabled</name>
+            <value>false</value>
+          </property>
+    - name: Removing localhost entry from client file
+      lineinfile: 
+       regexp: "localhost" 
+       path: /home/hadoop/hadoop/etc/hadoop/workers
+       state: absent
+    - name: Adding worker node
+      blockinfile:
+       path: /home/hadoop/hadoop/etc/hadoop/workers
+       content: |
+        node1
+        node2
+    - name: Arcive the edited hadoop directory from master
+      archive:
+       path: /home/hadoop/hadoop/etc/hadoop
+       dest: /home/hadoop/hadoop.tar.gz
+       format: gz
+      tags: ipsr
+    - name: Fetch the Hadoop tar file from master
+      fetch:
+       src: /home/hadoop/hadoop.tar.gz
+       dest: /root/hadoop/hadoop.tar.gz
+       flat: yes
+      tags: ipsr 
+- name: Configure hadoop user in Master
+  hosts: node1,node2
+  tasks:
+    - name: Download Hadoop package and extract
+      unarchive:
+       src: /root/hadoop/hadoop-3.1.3.tar.gz
+       dest: /home/hadoop/
+    - name: Rename the directory
+      shell: mv /home/hadoop/hadoop-3.1.3 /home/hadoop/hadoop
+    - name: Configure nodes by using backup created from master
+      unarchive:
+       src: /root/hadoop/hadoop.tar.gz
+       dest: /home/hadoop/hadoop/etc/
+       force: yes
