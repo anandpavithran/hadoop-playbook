@@ -35,4 +35,7 @@ ansible-playbook hadoop2.yml
    hdfs dfsadmin -report
    http://your_master_node_IP:9870
 
-
+Based on below reference only the playbook is created.
+REFERENCE
+#########
+https://www.techsupportpk.com/2020/03/how-to-create-multi-node-hadoop-cluster-centos-rhel.html
